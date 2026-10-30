@@ -1,0 +1,129 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract AgentIDDEX {
+
+    address public owner;
+
+    // Agent ID registration
+    mapping(address => uint256) public agentId;
+    mapping(address => bool) public isRegistered;
+
+    // Token exchange rate
+    mapping(address => mapping(address => uint256)) public rates;
+
+    event AgentRegistered(address indexed user, uint256 agent);
+    event AgentRevoked(address indexed user);
+    event Swap(
+        address indexed user,
+        uint256 agent,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 amountOut
+    );
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    modifier onlyAgent() {
+        require(isRegistered[msg.sender], "Agent ID required");
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    // Register Agent ID
+    function registerAgent(address user, uint256 id) external onlyOwner {
+        require(user != address(0), "Invalid address");
+        require(id > 0, "Invalid Agent ID");
+
+        agentId[user] = id;
+        isRegistered[user] = true;
+
+        emit AgentRegistered(user, id);
+    }
+
+    // Revoke Agent ID
+    function revokeAgent(address user) external onlyOwner {
+        isRegistered[user] = false;
+        emit AgentRevoked(user);
+    }
+
+    // Set exchange rate
+    // Rate uses 1e18 precision
+    function setRate(
+        address tokenIn,
+        address tokenOut,
+        uint256 rate
+    ) external onlyOwner {
+        require(tokenIn != tokenOut, "Same token");
+        require(rate > 0, "Invalid rate");
+
+        rates[tokenIn][tokenOut] = rate;
+    }
+
+    // Swap tokens
+    function swap(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) external onlyAgent {
+        require(amountIn > 0, "Zero amount");
+
+        uint256 rate = rates[tokenIn][tokenOut];
+        require(rate > 0, "Pair unavailable");
+
+        uint256 amountOut = amountIn * rate / 1e18;
+
+        require(
+            IERC20(tokenOut).balanceOf(address(this)) >= amountOut,
+            "Insufficient liquidity"
+        );
+
+        require(
+            IERC20(tokenIn).transferFrom(
+                msg.sender,
+                address(this),
+                amountIn
+            ),
+            "Transfer failed"
+        );
+
+        require(
+            IERC20(tokenOut).transfer(msg.sender, amountOut),
+            "Output failed"
+        );
+
+        emit Swap(
+            msg.sender,
+            agentId[msg.sender],
+            tokenIn,
+            tokenOut,
+            amountIn,
+            amountOut
+        );
+    }
+
+    // Withdraw tokens
+    function withdraw(
+        address token,
+        uint256 amount
+    ) external onlyOwner {
+        require(
+            IERC20(token).transfer(owner, amount),
+            "Withdraw failed"
+        );
+    }
+}
